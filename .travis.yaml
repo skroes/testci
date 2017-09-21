@@ -1,41 +1,94 @@
-sudo: required
-dist: trusty
-addons:
-  apt:
-    sources:
-      - google-chrome
-    packages:
-      - google-chrome-stable
+# Set up notification options
+notifications: 
+  email:
+    recipients:
+      - one@example.com
+      - other@example.com
+
+    # change is when the repo status goes from pass to fail or vice versa
+    on_success: change
+    on_failure: always
+
+# specify language
 language: node_js
+
+# specify language options
 node_js:
-  - "7"
+- '0.10'
+- '0.11'
+
+# configure which branches to run
+branches:
+  # whitelist
+  only:
+    - master
+    - /^deploy-.*$/ # regex ok
+  # blacklist
+  except:
+    - dontrunme 
+    - test 
+
+# declare your environment variables
 env:
-    - EMBER_VERSION=default
-    - EMBER_VERSION=release
-    - EMBER_VERSION=beta
-    - EMBER_VERSION=canary
-matrix:
-  fast_finish: true
-  allow_failures:
-    - env: EMBER_VERSION=release
-    - env: EMBER_VERSION=beta
-    - env: EMBER_VERSION=canary
+  # global will stay the same across all matrix possibilities (will not create additional combinations to run)
+  global:
+    - SECRET_TOKEN=k399dkkgklsk
+  # matrix variables will create a new build for each specified variable
+  matrix:
+    - DB=production
+    - DB=testing
+
+# enable services (stuff like DBs, MQs)
+services:
+  - mongodb     # will start mongodb
+  - rabbitmq # will start rabbitmq-server
+
+## begin build steps
+####################
 
 before_install:
-    # setting the path for phantom.js 2.0.0
-    - export PATH=/usr/local/phantomjs-2.0.0/bin:$PATH
-    # starting a GUI to run tests, per https://docs.travis-ci.com/user/gui-and-headless-browsers/#Using-xvfb-to-Run-Tests-That-Require-a-GUI
-    - export DISPLAY=:99.0
-    - sh -e /etc/init.d/xvfb start
-    - "npm config set spin false"
-    - "npm install -g npm@^2"
+- sudo apt-get update -qq
+
 install:
-    - mkdir travis-phantomjs
-    - wget https://s3.amazonaws.com/travis-phantomjs/phantomjs-2.0.0-ubuntu-12.04.tar.bz2 -O $PWD/travis-phantomjs/phantomjs-2.0.0-ubuntu-12.04.tar.bz2
-    - tar -xvf $PWD/travis-phantomjs/phantomjs-2.0.0-ubuntu-12.04.tar.bz2 -C $PWD/travis-phantomjs
-    - export PATH=$PWD/travis-phantomjs:$PATH
-    - npm install -g bower
-    - npm install
-    - bower install
-script:
-    - ember test --server
+  - wget https://github.com/n1k0/casperjs/archive/1.0.2.tar.gz -O /tmp/casper.tar.gz
+  - tar -xvf /tmp/casper.tar.gz
+  - export PATH=$PATH:$PWD/casperjs-1.0.2/bin/
+
+before_script:
+  - bower install
+
+after_success:
+- test $TRAVIS_PULL_REQUEST = false
+  && git push
+
+before_deploy:
+# check that build passed successfully
+# add the \ afterwards to tell travis it's part of the same command thanks @markhuge
+- test $TRAVIS_TEST_RESULT = 0 \
+  && gulp build \
+  && cd dist \
+  && npm install --prod \
+  && cd $TRAVIS_BUILD_DIR \
+  && tar -zcvf amber-storm-$TRAVIS_BRANCH.tar.gz dist \
+  && export PRODBUILDCOMPLETE=true
+
+
+## Deployment options
+####################
+
+deploy:
+  # specify the deployment provider
+  provider: releases
+  # options for provider
+  api_key:
+    secure: securekeyhere
+  file: myrepo-$TRAVIS_BRANCH.tar.gz
+  # conditions for deployment
+  on:
+    condition: $PRODBUILDCOMPLETE = true
+    repo: myname/myrepo
+    all_branches: true
+    tags: true
+
+after_deploy:
+  - ssh git@mysite.biz "./deploy.sh $TRAVIS_BRANCH"
